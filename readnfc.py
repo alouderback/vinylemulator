@@ -4,8 +4,14 @@ import appsettings  # you shouldnt need to edit this file
 import usersettings  # this is the file you might need to edit
 import sys
 import os
+import argparse
+import logging
+import time
+import sys
 import pychromecast
-
+from pychromecast.controllers.spotify import SpotifyController
+import spotify_token as st
+import spotipy
 
 # this function gets called when a NFC tag is detected
 def touched(tag):
@@ -42,7 +48,7 @@ def touched(tag):
 
             print("Detected " + servicetype + " service request")
 
-            os.system(castinstruction)
+            launch_spotify(usersettings.chromecast, usersettings.username, usersettings.password, receivedtext)
 
 
     else:
@@ -54,6 +60,86 @@ def touched(tag):
             "in text format. Please check the data on the card using NFC Tools on Windows or Mac.")
     return True
 
+
+def launch_spotify(target, user, password, uri):
+
+    chromecasts = pychromecast.get_listed_chromecasts(friendly_names=target)
+    cast = None
+    for _cast in chromecasts:
+        if _cast.name == target:
+            cast = _cast
+            break
+
+    if not cast:
+        print('No chromecast with name "{}" discovered'.format(target))
+        print("Discovered casts: {}".format(chromecasts))
+        sys.exit(1)
+
+    print("cast {}".format(cast))
+
+    class ConnListener:
+        def __init__(self, mz):
+            self._mz = mz
+
+        def new_connection_status(self, connection_status):
+            """Handle reception of a new ConnectionStatus."""
+            if connection_status.status == "CONNECTED":
+                self._mz.update_members()
+
+    class MzListener:
+        def __init__(self):
+            self.got_members = False
+
+        def multizone_member_added(self, uuid):
+            pass
+
+        def multizone_member_removed(self, uuid):
+            pass
+
+        def multizone_status_received(self):
+            self.got_members = True
+
+    # Wait for connection to the chromecast
+    cast.wait()
+
+    spotify_device_id = None
+
+    # Create a spotify token
+    data = st.start_session(user, password)
+    access_token = data[0]
+    expires = data[1] - int(time.time())
+
+    #Create spotify client
+    client = spotipy.Spotify(auth=access_token)
+
+    # Launch the spotify app on cast device
+    sp = SpotifyController(access_token, expires)
+    cast.register_handler(sp)
+    sp.launch_app()
+
+    if not sp.is_launched and not sp.credential_error:
+        print("Failed to launch spotify controller due to timeout")
+        sys.exit(1)
+    if not sp.is_launched and sp.credential_error:
+        print("Failed to launch spotify controller due to credential error")
+        sys.exit(1)
+
+    # Query spotify for active devices
+    devices_available = client.devices()
+
+    # Match active spotify devices with the spotify controller's device id
+    for device in devices_available["devices"]:
+        if device["id"] == sp.device:
+            spotify_device_id = device["id"]
+            break
+
+    if not spotify_device_id:
+        print('No device with id "{}" known by Spotify'.format(sp.device))
+        print("Known devices: {}".format(devices_available["devices"]))
+        sys.exit(1)
+
+    # Start playback
+    client.start_playback(device_id=spotify_device_id, context_uri=uri)
 
 print("")
 print("")
