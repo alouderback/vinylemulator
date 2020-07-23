@@ -4,6 +4,7 @@ import appsettings  # you shouldnt need to edit this file
 import usersettings  # this is the file you might need to edit
 import sys
 import os
+import pychromecast
 
 
 # this function gets called when a NFC tag is detected
